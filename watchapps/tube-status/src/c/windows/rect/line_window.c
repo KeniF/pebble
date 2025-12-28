@@ -8,45 +8,103 @@
 static Window *s_window;
 static MenuLayer *s_menu_layer;
 static StatusBarLayer *s_status_bar;
+static bool s_good_lines_expanded = false;
 
 /******************************** Click config *********************************/
 
 static void select_click_handler(struct MenuLayer *menu_layer, MenuIndex *cell_index, void *context) {
-  int index = (int)cell_index->row;
+  int position = (int)cell_index->row;
+  int disrupted_count = data_get_disrupted_or_pinned_count();
+  
+  // Check if this is the "All other lines" row
+  if (!s_good_lines_expanded && position == disrupted_count) {
+    s_good_lines_expanded = true;
+    menu_layer_reload_data(s_menu_layer);
+    return;
+  }
+  
+  // Adjust position if expanded and past the divider
+  int actual_position = position;
+  if (s_good_lines_expanded && position > disrupted_count) {
+    actual_position = position - 1;  // Skip the divider row
+  }
+  
+  int index = data_get_line_index_at_position(actual_position);
   if (!data_get_line_has_reason(index)) return;
 
   reason_window_push(index);
+}
+
+static void select_long_click_handler(struct MenuLayer *menu_layer, MenuIndex *cell_index, void *context) {
+  int position = (int)cell_index->row;
+  int disrupted_count = data_get_disrupted_or_pinned_count();
+  
+  // Ignore long click on "All other lines" row
+  if (!s_good_lines_expanded && position == disrupted_count) {
+    return;
+  }
+  
+  // Adjust position if expanded and past the divider
+  int actual_position = position;
+  if (s_good_lines_expanded && position > disrupted_count) {
+    actual_position = position - 1;
+  }
+  
+  int index = data_get_line_index_at_position(actual_position);
+  
+  data_toggle_line_pinned(index);
+  
+  // Refresh the menu layer
+  menu_layer_reload_data(s_menu_layer);
+  
+  // Vibrate to confirm
+  vibes_short_pulse();
 }
 
 /********************************* MenuLayer **********************************/
 
 void draw_row_handler(GContext *ctx, const Layer *cell_layer, MenuIndex *cell_index, void *context) {
   GRect bounds = layer_get_bounds(cell_layer);
-  int index = cell_index->row;
-
-  int received = data_get_lines_received();
-  if (index >= received) {
-    // All other lines good
-    graphics_context_set_fill_color(ctx, GColorWhite);
+  int position = cell_index->row;
+  int disrupted_count = data_get_disrupted_or_pinned_count();
+  
+  // Draw "All other lines" divider row
+  if (position == disrupted_count) {
+    graphics_context_set_fill_color(ctx, GColorLightGray);
     graphics_fill_rect(ctx, bounds, GCornerNone, 0);
-
+    
     graphics_context_set_text_color(ctx, GColorBlack);
     graphics_draw_text(
       ctx,
-      received == 0 ? "Good service on all lines" : "Good service on all other lines",
-      scalable_get_font(SFI_Small),
+      s_good_lines_expanded ? "All other lines" : "All other lines  >",
+      scalable_get_font(SFI_MediumBold),
       scalable_grect_pp(
-        GRect(0, -25, 1000, 250),
-        GRect(0, -25, 1000, 250)
+        GRect(40, 10, 900, 200),
+        GRect(50, 25, 900, 200)
       ),
-      GTextOverflowModeWordWrap,
-      GTextAlignmentCenter,
+      GTextOverflowModeTrailingEllipsis,
+      GTextAlignmentLeft,
       NULL
     );
+    
+    // Sep
+    const int sep_h = scalable_y_pp(10, 15);
+    graphics_context_set_fill_color(ctx, GColorBlack);
+    graphics_fill_rect(ctx, GRect(bounds.origin.x, bounds.size.h - sep_h, bounds.size.w, sep_h), GCornerNone, 0);
     return;
   }
+  
+  // Adjust position for rows after the divider
+  int actual_position = position;
+  if (position > disrupted_count) {
+    actual_position = position - 1;
+  }
 
+  int index = data_get_line_index_at_position(actual_position);
   LineData *line_data = data_get_line(index);
+  
+  // Determine if this line has good service
+  bool has_good_service = (strlen(line_data->state) == 0);
 
   const int logo_bounds_x = bounds.origin.x + (LOGO_MARGIN / 4);
   GRect logo_bounds = GRect(
@@ -107,7 +165,7 @@ void draw_row_handler(GContext *ctx, const Layer *cell_layer, MenuIndex *cell_in
   );
   graphics_draw_text(
     ctx,
-    line_data->state,
+    has_good_service ? "Good Service" : line_data->state,
     scalable_get_font(SFI_MediumBold),
     scalable_grect_pp(
       GRect(220, 75, 750, 200),
@@ -119,9 +177,9 @@ void draw_row_handler(GContext *ctx, const Layer *cell_layer, MenuIndex *cell_in
   );
 
   // Show hint arrow if reason can be viewed
-  if (menu_layer_is_index_selected(s_menu_layer, cell_index) && data_get_line_has_reason(cell_index->row)) {
+  if (menu_layer_is_index_selected(s_menu_layer, cell_index) && data_get_line_has_reason(index)) {
     // Background
-    graphics_context_set_fill_color(ctx, data_get_line_state_color(cell_index->row));
+    graphics_context_set_fill_color(ctx, data_get_line_state_color(index));
     graphics_fill_rect(
       ctx,
       scalable_grect(915, 0, 90, 260),
@@ -143,6 +201,22 @@ void draw_row_handler(GContext *ctx, const Layer *cell_layer, MenuIndex *cell_in
       NULL
     );
   }
+  
+  if (data_is_line_pinned(index)) {
+    graphics_context_set_text_color(ctx, GColorBlack);
+    graphics_draw_text(
+      ctx,
+      "*",
+      scalable_get_font(SFI_Small),
+      scalable_grect_pp(
+        GRect(180, 10, 200, 100),
+        GRect(190, 10, 200, 100)
+      ),
+      GTextOverflowModeWordWrap,
+      GTextAlignmentLeft,
+      NULL
+    );
+  }
 
   // Sep
   const int sep_h = scalable_y_pp(10, 15);
@@ -151,18 +225,27 @@ void draw_row_handler(GContext *ctx, const Layer *cell_layer, MenuIndex *cell_in
 }
 
 uint16_t get_num_rows_handler(MenuLayer *menu_layer, uint16_t section_index, void *context) {
-  // Number of concern sent by JS plus one for 'all others are good' notice
-  return data_get_lines_received() + 1;
+  int disrupted_count = data_get_disrupted_or_pinned_count();
+  if (s_good_lines_expanded) {
+    // All lines + 1 divider row
+    return LineTypeMax + 1;
+  } else {
+    // Disrupted/pinned lines + 1 "All other lines" row
+    return disrupted_count + 1;
+  }
 }
 
 int16_t get_cell_height_handler(struct MenuLayer *menu_layer, MenuIndex *cell_index, void *context) {
+  int disrupted_count = data_get_disrupted_or_pinned_count();
+  // Smaller height for the "All other lines" divider row
+  if ((int)cell_index->row == disrupted_count) {
+    return scalable_y(180);
+  }
   return scalable_y(260);
 }
 
 void selection_will_change_handler(struct MenuLayer *menu_layer, MenuIndex *new_index, MenuIndex old_index, void *context) {
-  if (new_index->row >= data_get_lines_received()) {
-    new_index->row = old_index.row;
-  }
+  // Allow selection of all lines
 }
 
 /*********************************** Window ***********************************/
@@ -187,6 +270,7 @@ static void window_load(Window *window) {
     .get_num_rows = get_num_rows_handler,
     .get_cell_height = get_cell_height_handler,
     .select_click = select_click_handler,
+    .select_long_click = select_long_click_handler,
     .selection_will_change = selection_will_change_handler,
   });
   layer_add_child(window_layer, menu_layer_get_layer(s_menu_layer));

@@ -3,8 +3,38 @@
 static LineData s_line_data[LineTypeMax];
 static int s_progress = 0;
 static int s_progress_max = LineTypeMax;
+static bool s_pinned_lines[LineTypeMax];
+static int s_sorted_indices[LineTypeMax + 1]; // +1 for "all good" row
+
+static void data_load_pinned_lines() {
+  if (persist_exists(PERSIST_KEY_PINNED_LINES)) {
+    int32_t bitmask = persist_read_int(PERSIST_KEY_PINNED_LINES);
+    for (int i = 0; i < LineTypeMax; i++) {
+      s_pinned_lines[i] = (bitmask & (1 << i)) != 0;
+    }
+  }
+}
+
+static void data_save_pinned_lines() {
+  int32_t bitmask = 0;
+  for (int i = 0; i < LineTypeMax; i++) {
+    if (s_pinned_lines[i]) {
+      bitmask |= (1 << i);
+    }
+  }
+  persist_write_int(PERSIST_KEY_PINNED_LINES, bitmask);
+}
 
 void data_init() {
+  // Initialize each line's type and pinned status
+  for (int i = 0; i < LineTypeMax; i++) {
+    s_line_data[i].type = i;
+    s_line_data[i].state[0] = '\0';
+    s_line_data[i].reason[0] = '\0';
+    s_pinned_lines[i] = false;
+  }
+  // Load saved pinned lines
+  data_load_pinned_lines();
 }
 
 void data_deinit() {
@@ -53,10 +83,10 @@ GColor data_get_line_color(int type) {
     case LineTypeNorthern:           return GColorBlack;
     case LineTypePicadilly:          return GColorFromHEX(0x003688);
     case LineTypeSuffragette:        return GColorMayGreen;
+    case LineTypeVictoria:           return GColorFromHEX(0x0098D4);
     case LineTypeWaterlooAndCity:    return GColorFromHEX(0x95CDBA);
     case LineTypeWeaver:             return GColorFromHEX(0xA12860);
     case LineTypeWindrush:           return GColorFromHEX(0xE32017);
-    case LineTypeVictoria:           return GColorFromHEX(0x0098D4);
     default:                         return GColorWhite;
   }
 #endif
@@ -124,6 +154,67 @@ int data_get_lines_received() {
   int count = 0;
   for (int i = 0; i < LineTypeMax; i++) {
     if (strlen(s_line_data[i].state) != 0) {
+      count++;
+    }
+  }
+  return count;
+}
+
+bool data_is_line_pinned(int index) {
+  if (index < 0 || index >= LineTypeMax) return false;
+  return s_pinned_lines[index];
+}
+
+void data_toggle_line_pinned(int index) {
+  if (index < 0 || index >= LineTypeMax) return;
+  s_pinned_lines[index] = !s_pinned_lines[index];
+  data_update_sorted_indices();
+  data_save_pinned_lines();
+}
+
+void data_set_line_pinned(int index, bool pinned) {
+  if (index < 0 || index >= LineTypeMax) return;
+  s_pinned_lines[index] = pinned;
+  data_update_sorted_indices();
+  data_save_pinned_lines();
+}
+
+void data_update_sorted_indices() {
+  int write_pos = 0;
+  
+  // First, add ALL pinned lines (issues first, then good service)
+  for (int i = 0; i < LineTypeMax; i++) {
+    if (s_pinned_lines[i] && strlen(s_line_data[i].state) != 0) {
+      s_sorted_indices[write_pos++] = i;
+    }
+  }
+  for (int i = 0; i < LineTypeMax; i++) {
+    if (s_pinned_lines[i] && strlen(s_line_data[i].state) == 0) {
+      s_sorted_indices[write_pos++] = i;
+    }
+  }
+  
+  // Then, add ALL unpinned lines (issues first, then good service)
+  for (int i = 0; i < LineTypeMax; i++) {
+    if (!s_pinned_lines[i] && strlen(s_line_data[i].state) != 0) {
+      s_sorted_indices[write_pos++] = i;
+    }
+  }
+  for (int i = 0; i < LineTypeMax; i++) {
+    if (!s_pinned_lines[i] && strlen(s_line_data[i].state) == 0) {
+      s_sorted_indices[write_pos++] = i;
+    }
+  }
+}
+
+int data_get_line_index_at_position(int position) {
+  return s_sorted_indices[position];
+}
+
+int data_get_disrupted_or_pinned_count() {
+  int count = 0;
+  for (int i = 0; i < LineTypeMax; i++) {
+    if (s_pinned_lines[i] || strlen(s_line_data[i].state) != 0) {
       count++;
     }
   }

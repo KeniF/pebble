@@ -25,28 +25,40 @@ static void draw_station(GContext *ctx, GPoint center, int index) {
 /******************************** Click Config ********************************/
 
 static void up_click_handler(ClickRecognizerRef recognizer, void *context) {
-  int max = data_get_lines_received();
+  int max = LineTypeMax;
   s_selected_line -= (s_selected_line > 0) ? 1 : -max;
   layer_mark_dirty(s_ring_layer);
 }
 
 static void down_click_handler(ClickRecognizerRef recognizer, void *context) {
-  int max = data_get_lines_received();
-  s_selected_line += (s_selected_line < max) ? 1 : -max;
+  int max = LineTypeMax;
+  s_selected_line += (s_selected_line < max - 1) ? 1 : -(max - 1);
   layer_mark_dirty(s_ring_layer);
 }
 
 static void select_click_handler(ClickRecognizerRef recognizer, void *context) {
-  int max = data_get_lines_received();
-  if (s_selected_line >= max || !data_get_line_has_reason(s_selected_line)) return;
+  int index = data_get_line_index_at_position(s_selected_line);
+  if (!data_get_line_has_reason(index)) return;
 
-  reason_window_push(s_selected_line);
+  reason_window_push(index);
+}
+
+static void select_long_click_handler(ClickRecognizerRef recognizer, void *context) {
+  int index = data_get_line_index_at_position(s_selected_line);
+  data_toggle_line_pinned(index);
+  
+  // Refresh the display
+  layer_mark_dirty(s_ring_layer);
+  
+  // Vibrate to confirm
+  vibes_short_pulse();
 }
 
 static void click_config_provider(void *context) {
   window_single_click_subscribe(BUTTON_ID_UP, up_click_handler);
   window_single_click_subscribe(BUTTON_ID_DOWN, down_click_handler);
   window_single_click_subscribe(BUTTON_ID_SELECT, select_click_handler);
+  window_long_click_subscribe(BUTTON_ID_SELECT, 500, select_long_click_handler, NULL);
 }
 
 /*********************************** Window ***********************************/
@@ -54,8 +66,13 @@ static void click_config_provider(void *context) {
 static void ring_update_proc(Layer *layer, GContext *ctx) {
   const GRect bounds = layer_get_bounds(layer);
   const int name_y_margin = 60;
+  
+  int index = data_get_line_index_at_position(s_selected_line);
+  LineData *line_data = data_get_line(index);
+  bool has_good_service = (strlen(line_data->state) == 0);
+  
   const GSize name_size = graphics_text_layout_get_content_size_with_attributes(
-    data_get_line_name(s_selected_line),
+    data_get_line_name(index),
     fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD),
     grect_inset(bounds, GEdgeInsets(name_y_margin, 0, 0, 0)),
     GTextOverflowModeWordWrap,
@@ -63,10 +80,8 @@ static void ring_update_proc(Layer *layer, GContext *ctx) {
     s_attributes
   );
 
-  int received = data_get_lines_received();
-
   // Draw ring
-  GColor line_color = s_selected_line == received ? GColorBlue : data_get_line_color(s_selected_line);
+  GColor line_color = data_get_line_color(index);
   graphics_context_set_fill_color(ctx, line_color);
   GRect ring_rect = grect_inset(bounds, GEdgeInsets(RING_MARGIN));
   graphics_fill_radial(
@@ -77,7 +92,7 @@ static void ring_update_proc(Layer *layer, GContext *ctx) {
     DEG_TO_TRIGANGLE(0),
     DEG_TO_TRIGANGLE(360)
   );
-  if (s_selected_line != received && data_get_line_color_is_striped(s_selected_line)) {
+  if (data_get_line_color_is_striped(index)) {
     graphics_context_set_fill_color(ctx, GColorWhite);
     graphics_fill_radial(
       ctx,
@@ -91,8 +106,8 @@ static void ring_update_proc(Layer *layer, GContext *ctx) {
 
   // Stations
   int angle = 0;
-  for(int i = 0; i <= received; i++) {
-    angle = (i * RING_MAX_ANGLE) / received;
+  for(int i = 0; i < LineTypeMax; i++) {
+    angle = (i * RING_MAX_ANGLE) / (LineTypeMax - 1);
     GPoint center = gpoint_from_polar(
       grect_inset(ring_rect, GEdgeInsets((LINE_WINDOW_MARGIN / 2) - 1)), 
       GOvalScaleModeFitCircle,
@@ -102,7 +117,7 @@ static void ring_update_proc(Layer *layer, GContext *ctx) {
   }
 
   // Selection
-  angle = (s_selected_line * RING_MAX_ANGLE) / received;
+  angle = (s_selected_line * RING_MAX_ANGLE) / (LineTypeMax - 1);
   GPoint center = gpoint_from_polar(
     grect_inset(ring_rect, GEdgeInsets((LINE_WINDOW_MARGIN / 2) - 1)), 
     GOvalScaleModeFitCircle,
@@ -113,24 +128,10 @@ static void ring_update_proc(Layer *layer, GContext *ctx) {
 
   graphics_context_set_text_color(ctx, GColorBlack);
 
-  // Summary of all other statuses
-  if (s_selected_line == received) {
-    graphics_draw_text(
-      ctx,
-      received == 0 ? "Good service on all lines" : "Good service on all other lines",
-      fonts_get_system_font(FONT_KEY_GOTHIC_24),
-      grect_inset(bounds, GEdgeInsets(name_y_margin, 0, 0, 0)),
-      GTextOverflowModeWordWrap, 
-      GTextAlignmentCenter,
-      s_attributes
-    );
-    return;
-  }
-
   // Line name and status
   graphics_draw_text(
     ctx,
-    data_get_line_name(s_selected_line),
+    data_get_line_name(index),
     fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD),
     grect_inset(bounds, GEdgeInsets(name_y_margin, 0, 0, 0)),
     GTextOverflowModeWordWrap, 
@@ -139,7 +140,7 @@ static void ring_update_proc(Layer *layer, GContext *ctx) {
   );
   graphics_draw_text(
     ctx,
-    data_get_line(s_selected_line)->state,
+    has_good_service ? "Good Service" : line_data->state,
     fonts_get_system_font(FONT_KEY_GOTHIC_24),
     grect_inset(bounds, GEdgeInsets(name_y_margin + name_size.h, 0, 0, 0)),
     GTextOverflowModeWordWrap, 
@@ -148,9 +149,9 @@ static void ring_update_proc(Layer *layer, GContext *ctx) {
   );
 
   // Reason window hint
-  if (data_get_line_has_reason(s_selected_line)) {
+  if (data_get_line_has_reason(index)) {
     // Background
-    graphics_context_set_fill_color(ctx, data_get_line_state_color(s_selected_line));
+    graphics_context_set_fill_color(ctx, data_get_line_state_color(index));
     graphics_fill_rect(
       ctx,
       grect_inset(bounds, GEdgeInsets(0, 0, 0, bounds.size.w - 12)),

@@ -2,6 +2,9 @@
 
 #include <pebble.h>
 
+// Persist storage keys
+#define PERSIST_KEY_PINNED_LINES 1
+
 // Order is very important - must match JS side
 typedef enum {
   LineTypeBakerloo = 0,

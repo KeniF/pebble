@@ -36,3 +36,15 @@ bool data_get_line_has_reason(int index);
 int data_get_progress_max();
 
 int data_get_lines_received();
+
+bool data_is_line_pinned(int index);
+
+void data_toggle_line_pinned(int index);
+
+void data_set_line_pinned(int index, bool pinned);
+
+void data_update_sorted_indices();
+
+int data_get_line_index_at_position(int position);
+
+int data_get_disrupted_or_pinned_count();

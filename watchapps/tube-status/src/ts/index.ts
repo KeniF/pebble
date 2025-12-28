@@ -106,9 +106,10 @@ const sendNextLine = async (lines: LineData[], index: number) => {
   const lineData = lines[index];
   if (!lineData) throw new Error(`No lineData for ${index}`);
 
+  const lineType = LINE_TYPE_MAP[lineData.id as LineId];
   const dict = {
-    LineIndex: index,
-    LineType: LINE_TYPE_MAP[lineData.id as LineId],
+    LineIndex: lineType,  // Use the actual line type as the index, not the loop counter
+    LineType: lineType,
     LineStatus: lineData.status,
     LineReason: lineData.reason,
     FlagIsComplete: index === lines.length - 1 ? 1 : 0,

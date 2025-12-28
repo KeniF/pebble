@@ -16,7 +16,8 @@ static void inbox_received_handler(DictionaryIterator *iter, void *context) {
 
     LineData *line_data = data_get_line(index);
     line_data->index = index;
-    line_data->type = packet_get_integer(iter, MESSAGE_KEY_LineType);
+    // Type should not be overwritten - it's set in data_init() to match the index
+    // line_data->type = packet_get_integer(iter, MESSAGE_KEY_LineType);
 
     char *status = packet_get_string(iter, MESSAGE_KEY_LineStatus);
     snprintf(line_data->state, strlen(status) + 1 /* EOF */, "%s", status);
@@ -36,6 +37,7 @@ static void inbox_received_handler(DictionaryIterator *iter, void *context) {
     packet_get_integer(iter, MESSAGE_KEY_FlagIsComplete) == 1
   ) {
     set_fast(false);
+    data_update_sorted_indices();
     line_window_push();
   }
 }
